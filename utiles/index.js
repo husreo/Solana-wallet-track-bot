@@ -94,23 +94,51 @@ const getMultiplePairs = async (tokenMint) => {
         try {
             const pairs = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`);
 
-            const data = await solanaConnection.getSignaturesForAddress(new PublicKey(pairs.data.pairs[0].pairAddress));
-            // const data = await solanaConnection.getSignaturesForAddress(new PublicKey(tokenMint));
-            const filter_by_time = data.filter((elem) => elem.blockTime < pairs.data.pairs[0].pairCreatedAt + 15000);
+            let transactionListLength = 1000
+            const allTransactions = []
 
-            const sniper= [];
-            console.log("Searching bots......");
-            let index = 0;
-            for (const iterator of filter_by_time) {
-                console.log(filter_by_time.length + '=>', index++);
-                const history = await solanaConnection.getParsedTransaction(iterator.signature, {
-                    maxSupportedTransactionVersion: 0,
-                });
-    
-                sniper.push(history?.transaction?.message?.accountKeys?.[0]?.pubkey?.toString() ?? '');
+            let data = await solanaConnection.getSignaturesForAddress(new PublicKey(pairs.data.pairs[0].pairAddress), {
+                limit: 1
+            }, "confirmed");
+            console.log("origin lenght ===> ", data.length);
+            allTransactions.push(data);
+
+            while (transactionListLength >= 1000) {
+                const lastSignature = data[data.length - 1];
+                const nextSignatures = await solanaConnection.getSignaturesForAddress(new PublicKey(pairs.data.pairs[0].pairAddress), { before: lastSignature.signature }, "confirmed");
+                allTransactions.push(nextSignatures)
+                data = nextSignatures
+                transactionListLength = nextSignatures.length;
+                console.log('current:',data.length);
+                console.log('total:',allTransactions.length)
+                if (allTransactions.length > 100) {
+                    return 'long'
+                }
             }
 
+            console.log("data ===> ", data.length);
+            console.log("all lenght ===> ", allTransactions.length);
+
+            const sniper= [];
+            let isbreak = false;
+            for (let index = allTransactions.length - 1; index >=0; index--) {
+                for (let m = allTransactions[index].length - 1; m >=0 ; m--) {
+                    if (allTransactions[index][m].blockTime * 1000 > pairs.data.pairs[0].pairCreatedAt + 15000) {
+                        isbreak = true;
+                        break;
+                    }
+                    const history = await solanaConnection.getParsedTransaction(allTransactions[index][m].signature, {
+                        maxSupportedTransactionVersion: 0,
+                    });
+                    sniper.push(history?.transaction?.message?.accountKeys?.[0]?.pubkey?.toString() ?? '');
+                }
+                if (isbreak) {
+                    break;
+                }
+            }
+            
             let uniqueArray = [...new Set(sniper)];
+            
             return uniqueArray;
         } catch (error) {
             console.log("Dexscreener error ====>", error);
