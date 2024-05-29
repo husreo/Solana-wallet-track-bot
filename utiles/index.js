@@ -1,14 +1,13 @@
 
 const axios = require('axios');
 const fs = require('fs');
-const { Commitment, Connection, PublicKey } = require('@solana/web3.js');
+const { Commitment, Connection, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const { getPdaMetadataKey } = require('@raydium-io/raydium-sdk');
 const { getMetadataAccountDataSerializer } = require('@metaplex-foundation/mpl-token-metadata');
-const { getMint, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
+const { getMint, TOKEN_PROGRAM_ID, getAccount } = require('@solana/spl-token');
 const { get } = require('http');
 const {getCreator} = require("./getCreator");
 
-// const tokenMint = "7y1TrdzE1cEeCgBvgdNB9DViMYdQ7UU2FKhnPDLYa7ae"
 const solanaConnection = new Connection('https://aged-maximum-pallet.solana-mainnet.quiknode.pro/5d2476aba2f79657eee64c4c71173eb549693756/');
 
 const getTokenInfo = async (tokenMint) => {
@@ -16,10 +15,6 @@ const getTokenInfo = async (tokenMint) => {
         const metadataPDA = getPdaMetadataKey(new PublicKey(tokenMint));
         const metadataAccount = await solanaConnection.getAccountInfo(metadataPDA.publicKey);
         const mintInfo = await getMint(solanaConnection, new PublicKey(tokenMint));
-        // await getCreator(tokenMint, solanaConnection);
-        // const ownerInfo = await ownersInfo(tokenMint);
-        // const allAccounts = await findHolders();
-        // console.log("all Owners ==>> ", allAccounts);
         
         const pairs = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`);
         console.log(pairs.data.pairs[0].info.socials);
@@ -52,7 +47,7 @@ const getTokenInfo = async (tokenMint) => {
       console.log(e);
       return null
     }
-  }
+}
 const ownersInfo = async (tokenMint) => {
     const filters = [
         { dataSize: 165 },
@@ -63,7 +58,6 @@ const ownersInfo = async (tokenMint) => {
         encoding: "base64",
         filters
     });
-    // console.log(holders.length);
 
     const owner_info = [];
     let index = 1;
@@ -76,76 +70,85 @@ const ownersInfo = async (tokenMint) => {
             const amount = Number(info.amount);
             const mint = await getMint(solanaConnection, info.mint);
             const balance = amount / (10 ** mint.decimals);
-            console.log(index++, '->', balance);
+            console.log(holders.length, "->", index++, '->', balance);
             if (balance) {
                 owner_info.push(
                     balance
                 )
             }
-        }, 10 * i);
+        }, 50 * i);
         if (i == holders.length)
             process.exit(1)
     })
+    console.log('owners', owner_info);
     return owner_info.sort();
     // console.log(owner_info.length, owner_info.sort());
 }
 const getMultiplePairs = async (tokenMint) => {
-    return (async () => {
-        try {
-            const pairs = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`);
+    try {
+        const pairs = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`);
+        console.log(pairs.data.pairs[0].pairAddress);
+        let transactionListLength = 1000
+        const allTransactions = []
 
-            let transactionListLength = 1000
-            const allTransactions = []
+        let data = await solanaConnection.getSignaturesForAddress(new PublicKey(pairs.data.pairs[0].pairAddress), {
+            limit: 1
+        }, "confirmed");
+        console.log("origin lenght ===> ", data.length);
+        allTransactions.push(data);
 
-            let data = await solanaConnection.getSignaturesForAddress(new PublicKey(pairs.data.pairs[0].pairAddress), {
-                limit: 1
-            }, "confirmed");
-            console.log("origin lenght ===> ", data.length);
-            allTransactions.push(data);
-
-            while (transactionListLength >= 1000) {
-                const lastSignature = data[data.length - 1];
-                const nextSignatures = await solanaConnection.getSignaturesForAddress(new PublicKey(pairs.data.pairs[0].pairAddress), { before: lastSignature.signature }, "confirmed");
-                allTransactions.push(nextSignatures)
-                data = nextSignatures
-                transactionListLength = nextSignatures.length;
-                console.log('current:',data.length);
-                console.log('total:',allTransactions.length)
-                if (allTransactions.length > 100) {
-                    return 'long'
-                }
+        while (transactionListLength >= 1000) {
+            const lastSignature = data[data.length - 1];
+            const nextSignatures = await solanaConnection.getSignaturesForAddress(new PublicKey(pairs.data.pairs[0].pairAddress), { before: lastSignature.signature }, "confirmed");
+            allTransactions.push(nextSignatures)
+            data = nextSignatures
+            transactionListLength = nextSignatures.length;
+            console.log('current:',data.length);
+            console.log('total:',allTransactions.length)
+            if (allTransactions.length > 200) {
+                return 'long'
             }
+        }
 
-            console.log("data ===> ", data.length);
-            console.log("all lenght ===> ", allTransactions.length);
+        console.log("data ===> ", data.length);
+        console.log("all lenght ===> ", allTransactions.length);
 
-            const sniper= [];
-            let isbreak = false;
-            for (let index = allTransactions.length - 1; index >=0; index--) {
-                for (let m = allTransactions[index].length - 1; m >=0 ; m--) {
-                    if (allTransactions[index][m].blockTime * 1000 > pairs.data.pairs[0].pairCreatedAt + 15000) {
-                        isbreak = true;
-                        break;
-                    }
-                    const history = await solanaConnection.getParsedTransaction(allTransactions[index][m].signature, {
-                        maxSupportedTransactionVersion: 0,
-                    });
-                    sniper.push(history?.transaction?.message?.accountKeys?.[0]?.pubkey?.toString() ?? '');
-                }
-                if (isbreak) {
+        const sniper= [];
+        let isbreak = false;
+
+        for (let index = allTransactions.length - 1; index >=0; index--) {
+            for (let m = allTransactions[index].length - 1; m >=0 ; m--) {
+                if (allTransactions[index][m].blockTime * 1000 > pairs.data.pairs[0].pairCreatedAt + 15000) {
+                    isbreak = true;
                     break;
                 }
+                const history = await solanaConnection.getParsedTransaction(allTransactions[index][m].signature, {
+                    maxSupportedTransactionVersion: 0,
+                });
+                sniper.push(history?.transaction?.message?.accountKeys?.[0]?.pubkey?.toString() ?? '');
             }
-            
-            let uniqueArray = [...new Set(sniper)];
-            
-            return uniqueArray;
-        } catch (error) {
-            console.log("Dexscreener error ====>", error);
-            return
+            if (isbreak) {
+                break;
+            }
         }
+        let arr = [[], [], [], [], [], [], [], [], [], [], []];
+        let uniqueArray = [...new Set(sniper)];
+        for (let index = 0; index < uniqueArray.length; index++) {
+            const element = uniqueArray[index];
+            const balance = await solanaConnection.getBalance(new PublicKey(element));
+            const lamports = balance/LAMPORTS_PER_SOL;
+            if (Math.floor(lamports/10) > 10) {
+                arr[10].push(element);
+            } else {
+                arr[Math.floor(lamports/10)].push(element);
+            }
+        }
+        console.log("snipers ===> ", arr);
+        return arr;
+    } catch (error) {
+        console.log("Dexscreener error ====>", error);
+        return
     }
-    )();
 }
 
 module.exports = {getTokenInfo, getMultiplePairs, ownersInfo};
