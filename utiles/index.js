@@ -2,12 +2,10 @@
 const axios = require('axios');
 const fs = require('fs');
 const { Commitment, Connection, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
-const { getPdaMetadataKey } = require('@raydium-io/raydium-sdk');
+const { getPdaMetadataKey, MARKET_STATE_LAYOUT_V3 } = require('@raydium-io/raydium-sdk');
 const { getMetadataAccountDataSerializer } = require('@metaplex-foundation/mpl-token-metadata');
 const { getMint, TOKEN_PROGRAM_ID, getAccount } = require('@solana/spl-token');
 const { get } = require('http');
-const {getCreator} = require("./getCreator");
-
 const solanaConnection = new Connection('https://aged-maximum-pallet.solana-mainnet.quiknode.pro/5d2476aba2f79657eee64c4c71173eb549693756/');
 
 const getTokenInfo = async (tokenMint) => {
@@ -84,6 +82,8 @@ const ownersInfo = async (tokenMint) => {
     return owner_info.sort();
     // console.log(owner_info.length, owner_info.sort());
 }
+
+//catch bots after for liqudity pools
 const getMultiplePairs = async (tokenMint) => {
     try {
         const pairs = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`);
@@ -151,4 +151,53 @@ const getMultiplePairs = async (tokenMint) => {
     }
 }
 
-module.exports = {getTokenInfo, getMultiplePairs, ownersInfo};
+//catch bots before launch on raydium
+const getMarketSniper = async (tokenMint) => {
+    const accounts = await solanaConnection.getProgramAccounts(
+        new PublicKey('srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX'),
+        {
+            commitment:'finalized',
+            filters: [
+            { dataSize: MARKET_STATE_LAYOUT_V3.span },
+            {
+                memcmp: {
+                    offset: MARKET_STATE_LAYOUT_V3.offsetOf("baseMint"),
+                    bytes: 'So11111111111111111111111111111111111111112' ,
+                },
+            },
+            {
+                memcmp: {
+                    offset: MARKET_STATE_LAYOUT_V3.offsetOf("quoteMint"),
+                    bytes: tokenMint,
+                },
+            },
+          ],
+        }
+    );
+    if (accounts.length == 0)
+        return null
+    const market_key = await accounts.map(({ account }) => MARKET_STATE_LAYOUT_V3.decode(account.data))[0].ownAddress;
+    console.log("market_key ==> ", market_key);
+    let data = await solanaConnection.getSignaturesForAddress(market_key, "confirmed");
+    let error_transactions = data.filter((val) => val.err !== null);
+    const sniper= [];
+    for (let index = 0; index < error_transactions.length; index++) {
+        const tranaction = error_transactions[index];
+        const history = await solanaConnection.getParsedTransaction(tranaction.signature, {
+            maxSupportedTransactionVersion: 0,
+        });
+        sniper.push(history?.transaction?.message?.accountKeys?.[0]?.pubkey?.toString() ?? '');
+    }
+    
+    fs.writeFile('myFile.json', JSON.stringify([...new Set(sniper)]), function (err) {
+        console.log(err);
+    });
+
+    return {
+        market_key,
+        contract: 'srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX',
+        sniper: [...new Set(sniper)]
+    }
+}
+
+module.exports = {getTokenInfo, getMultiplePairs, ownersInfo, getMarketSniper};

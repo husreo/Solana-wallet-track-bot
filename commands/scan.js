@@ -1,8 +1,9 @@
 const { SlashCommandBuilder, ActionRowBuilder, EmbedBuilder } = require('discord.js');
 const Discord = require('discord.js');
+const { Connection, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 
 const wait = require('node:timers/promises').setTimeout;
-const { getMultiplePairs, ownersInfo } = require("../utiles/index");
+const { getMultiplePairs, ownersInfo, getMarketSniper } = require("../utiles/index");
 
 // const channels = [
 // 	'1244968006405066804',
@@ -31,7 +32,7 @@ const channels = [
 	'1245149695739822160',
 	'1245149719643291769'
 ]
-
+const solanaConnection = new Connection('https://aged-maximum-pallet.solana-mainnet.quiknode.pro/5d2476aba2f79657eee64c4c71173eb549693756/');
 module.exports = {
 	data: new SlashCommandBuilder()
 		.setName('scan')
@@ -40,32 +41,36 @@ module.exports = {
 	async execute(interaction) {
 		await interaction.deferReply();
 		const mint = interaction.options.getString('mint');
-		// const owners = await ownersInfo(mint);
-		let bots = await getMultiplePairs(mint);
-		if (bots === 'long') {
-			interaction.followUp("Too big transactions!");
+		const data = await getMarketSniper(mint);
+		if (!data) {
+			await interaction.followUp("Market not created!");
 			return
 		}
-
-		for (let index = 0; index < bots.length; index++) {
-			if (bots[index].length === 0) {
-				continue;
+		const moonEmbed1 = new EmbedBuilder()
+			.setColor(0x6058f3)
+			.setTitle("Spy snipers")
+			.addFields({name: `Contract`, value: `\`${data.contract}\``})
+			.addFields({name: `Market ID`, value: `\`${data.market_key.toBase58()}\``})
+		const snipers = data.sniper;
+		let sniperList = '';
+		let fieldCount = 0;
+		for (let index = 0; index < snipers.length; index++) {
+			const balance = await solanaConnection.getBalance(new PublicKey(snipers[index]));
+			const sniper = `- ${snipers[index]} | ${balance/LAMPORTS_PER_SOL}\n`;
+			if (sniperList.length + sniper.length > 1024) {
+				moonEmbed1.addFields({ name: `Snipers ${fieldCount + 1}`, value: sniperList });
+				sniperList = '';
+				fieldCount++;
 			}
-			const element = bots[index];
-			let str = '';
-			for (let i = 0; i < element.length; i++) {
-				str += '\n' + element[i];
-			}
-
-			const moonEmbed1 = new EmbedBuilder()
-                .setColor(16711680)
-                .setTitle("Spy snipers")
-                .setDescription(str)
-			console.log("channnel id ====> ", channels[index]);
-			await interaction.client.channels.cache.get(channels[index]).send({ embeds: [moonEmbed1] });
+			sniperList += sniper;
 		}
-		
-		await interaction.followUp("Finished");
+
+		if (sniperList.length > 0) {
+		moonEmbed1.addFields({ name: `Snipers ${fieldCount + 1}`, value: sniperList });
+		}
+
+			// .setDescription(`Contract \n \`${data.contract}\` \n \n Market ID \n \`${data.market_key.toBase58()}\` \n \n \n ${sniperList}`)
+		await interaction.followUp({ embeds: [moonEmbed1] });
 
 		console.log("done");
 	},
