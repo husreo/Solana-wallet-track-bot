@@ -13,11 +13,13 @@ const {
 const {
   getMetadataAccountDataSerializer,
 } = require("@metaplex-foundation/mpl-token-metadata");
-const { getMint, TOKEN_PROGRAM_ID, getAccount } = require("@solana/spl-token");
+const { getMint, TOKEN_PROGRAM_ID, getAccount, unpackAccount } = require("@solana/spl-token");
 const { struct, u64, u8 } = require("@project-serum/borsh");
 const base58 = require("bs58");
 const { get } = require("http");
 const dotenv = require("dotenv");
+const { log } = require("console");
+const { EmbedBuilder } = require('discord.js');
 
 dotenv.config();
 
@@ -234,7 +236,7 @@ const getMarketSniper = async (tokenMint) => {
     );
     const pubkey =
       history?.transaction?.message?.accountKeys?.[0]?.pubkey?.toString() ?? "";
-    const solAmount = await getInfo(history, tranaction.signature);
+    const solAmount = await getInfo(history);
     if (solAmount > 100) {
       continue;
     }
@@ -242,17 +244,18 @@ const getMarketSniper = async (tokenMint) => {
 
     console.log("Sol amount to buy: ", solAmount);
     const sniperArr = sniper.map((snp) => snp.pubkey);
+    if (solAmount == "err") {
+      continue;
+    }
     if (sniperArr.includes(pubkey)) {
-      if (solAmount>0) {
-        sniperArr[sniperArr.indexOf(pubkey)].solAmount = solAmount;
-      }
-    } else {
+      // if (solAmount>0) {
+      //   sniperArr[sniperArr.indexOf(pubkey)].solAmount = solAmount;
+      // }
       sniper.push({
         pubkey,
         solAmount: toFixed(solAmount) ,
       });
-      
-    }
+    } 
   }
   return {
     market_key,
@@ -266,14 +269,42 @@ const AccountLayout = struct([
   u64("amountIn"),
   u64("minAmountOut"),
 ]);
-
+const getTokenMint = async (history) => {
+  try {
+    const ins1 = history?.transaction?.message?.instructions;
+      const data1 = ins1.filter((ins) => {
+        try {
+          return ins.accounts.length == 18;
+        } catch (error) {
+          return false;
+        }
+      });
+      console.log("transaction ===>", data1[0].accounts[5]);
+      const info = await solanaConnection.getAccountInfo(data1[0].accounts[5])
+      
+      const decodedInfo = unpackAccount(data1[0].accounts[5], info)
+      const tokenMint = decodedInfo.mint;
+      if (tokenMint.indexOf("So11") == 0) {
+        info = await solanaConnection.getAccountInfo(data1[0].accounts[6])
+        
+        decodedInfo = unpackAccount(data1[0].accounts[6], info)
+        tokenMint = decodedInfo.mint;
+      }
+      return tokenMint
+  } catch (error) {
+    return null;
+  }
+}
 const getInfo = async (history, signature) => {
   try {
+    console.log("signature ===>", signature);
     const ins = history?.meta?.innerInstructions.filter((ins) => {
       return ins?.instructions[0]?.accounts?.length == 18;
     })[0];
+    console.log("instruction ===> ", ins);
     const data = ins.instructions[0].data;
     const tokenData = AccountLayout.decode(Buffer.from(base58.decode(data)));
+
     const sol = Number(tokenData.amountIn.toString()) / 10 ** 9;
     
     return sol;
@@ -284,20 +315,96 @@ const getInfo = async (history, signature) => {
         try {
           return ins.accounts.length == 18;
         } catch (error) {
-          return false;0
+          return false;
         }
-      })[0].data;
+      });
+      console.log("transaction ===>", data1[0].accounts[5]);
       const tokenData1 = AccountLayout.decode(
-        Buffer.from(base58.decode(data1))
+        Buffer.from(base58.decode(data1[0].data))
       );
+
       const sol1 = Number(tokenData1.amountIn.toString()) / 10 ** 9;
-      
       return sol1;
+      
     } catch (error) {
-      return 0;
+      console.log(error);
+      return "err";
     }
   }
 };
+let logID = -1;
+let hasToPing = true
+const getNotification = async(addr, interaction) => {
+  console.log("address ===> ", addr);
+  // let count = 0;
+    logID = await solanaConnection.onLogs(new PublicKey(addr), async (logs, context) => {
+    console.log("log ID ======>", logs.signature);
+    const history = await solanaConnection.getParsedTransaction(
+        logs.signature,
+        {
+          maxSupportedTransactionVersion: 0,
+        }
+      );
+
+    const sol = await getInfo(history, logs.signature);
+    const mint = await getTokenMint(history);
+    if (sol != 'err' && hasToPing) {
+      console.log("Ping moment!");
+      hasToPing = false
+      const moonEmbed1 = new EmbedBuilder()
+        .setColor(0x6058f3)
+        .setTitle("Swap now")
+        .addFields({ name: `Address`, value: `\`${addr}\`` })
+        .addFields({ name: `Amount`, value: `\`${sol}\``})
+        .addFields({ name: `Mint`, value: `\`${mint}\``})
+  
+      const user = await interaction.client.users.fetch(process.env.USER_ID || "");
+      await user.send({ embeds: [moonEmbed1] });
+      // await solanaConnection.removeOnLogsListener(logID);
+    }
+    setTimeout(() => {
+      hasToPing = true
+    }, 300000)
+    // if (logs.err) {
+      
+    //   const history = await solanaConnection.getParsedTransaction(
+    //     logs.signature,
+    //     {
+    //       maxSupportedTransactionVersion: 0,
+    //     }
+    //   );
+
+    //   const sol = await getInfo(history);
+    //   if (sol != "err") {
+    //     if (count++ == 3) {
+    //       console.log("addr: ", addr);
+    //       console.log("solprice: ", sol);
+    //       moonEmbed1
+    //       .addFields({ name: `Address`, value: `\`${addr}\`` })
+    //       .addFields({ name: `amount`, value: `\`${sol}\``})
+
+    //       const user = await interaction.client.users.fetch(process.env.USER_ID || "");
+		// 	    await user.send({ embeds: [moonEmbed1] });
+    //       await solanaConnection.removeOnLogsListener(logID);
+    //     }
+    //   }
+    //   console.log("sol: ", sol);
+    // } else {
+    //   count = 0;
+    // }
+  });
+
+}
+
+const closeTrack = async() => {
+  if (!logID) {
+    console.log("closed ", logID);
+    await solanaConnection.removeOnLogsListener(logID);
+    logID = -1;
+  } else {
+    console.log("there's no id here!");
+  }
+}
 
 function toFixed(x) {
   if (Math.abs(x) < 1.0) {
@@ -316,11 +423,14 @@ function toFixed(x) {
   }
   return x;
 }
+
 module.exports = {
   solanaConnection,
   getTokenInfo,
   getMultiplePairs,
   ownersInfo,
   getMarketSniper,
+  getNotification,
+  closeTrack,
+  getInfo
 };
-

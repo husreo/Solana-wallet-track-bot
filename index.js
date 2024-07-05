@@ -5,8 +5,11 @@ const Discord = require('discord.js');
 // Require the necessary discord.js classes
 const { Client, Events, GatewayIntentBits, Collection, REST, Routes, AuditLogEvent, OverwriteType } = require('discord.js');
 const { Connection } = require('@solana/web3.js');
+const dotenv = require("dotenv");
 
-const clientID = '1243626374246305823';
+dotenv.config();
+// const clientID = '1243626374246305823';
+const clientID = process.env.APP_ID || "";
 // Create a new client instance
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 
@@ -30,7 +33,7 @@ for (const file of commandFiles) {
 	commands.push(command.data.toJSON());
 }
 
-const rest = new REST({ version: '9' }).setToken("MTI0MzYyNjM3NDI0NjMwNTgyMw.Gr1RkI.o6sXbKbIKmOx_Y_bUD2VVRloQ7k6XSqh1eIGeQ");
+const rest = new REST({ version: '9' }).setToken(process.env.BOTTOKEN || "");
 (async () => {
 	try {
 		console.log('Started refreshing application (/) commands.');
@@ -47,12 +50,13 @@ const rest = new REST({ version: '9' }).setToken("MTI0MzYyNjM3NDI0NjMwNTgyMw.Gr1
 })();
 
 // Log in to Discord with your client's token
-client.login("MTI0MzYyNjM3NDI0NjMwNTgyMw.Gr1RkI.o6sXbKbIKmOx_Y_bUD2VVRloQ7k6XSqh1eIGeQ");
+client.login(process.env.BOTTOKEN || "");
 
 client.on(Events.InteractionCreate, async interaction => {
 	if (!interaction.isChatInputCommand()) return;
 
 	const command = interaction.client.commands.get(interaction.commandName);
+	// interaction.guild.members 
 	if (!command) {
 		console.error(`No command matching ${interaction.commandName} was found.`);
 		return;

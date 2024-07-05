@@ -43,7 +43,7 @@ module.exports = {
       await interaction.followUp("Market not created!");
       return;
     }
-    const moonEmbed1 = new EmbedBuilder()
+    let moonEmbed1 = new EmbedBuilder()
       .setColor(0x6058f3)
       .setTitle("Spy snipers")
       .addFields({ name: `Contract`, value: `\`${mint}\`` })
@@ -54,6 +54,9 @@ module.exports = {
     const snipers = data.sniper;
     let sniperList = "";
     let fieldCount = 0;
+    if (snipers.length === 0) {
+      moonEmbed1.setDescription("There's no spamming because this lp was already created or still no snipers yet.")
+    }
     for (let index = 0; index < snipers.length; index++) {
       // const balance = await solanaConnection.getBalance(
       //   new PublicKey(snipers[index])
@@ -67,6 +70,12 @@ module.exports = {
         });
         sniperList = "";
         fieldCount++;
+        if (fieldCount * 1024 > 6000) {
+          await interaction.followUp({ embeds: [moonEmbed1] });
+
+          moonEmbed1 = new EmbedBuilder()
+          .setColor(0x6058f3)
+        }
       }
       sniperList += sniper;
     }
