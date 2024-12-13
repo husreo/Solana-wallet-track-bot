@@ -1,4 +1,4 @@
-#Solana wallet & token tracking bot running on discord.
+# Solana wallet & token tracking bot running on discord.
 - Track snipers on market.
 - Get info of wallet
 - Get token launched newaly
